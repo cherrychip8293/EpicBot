@@ -77,7 +77,7 @@ class VoiceLogger:
             embed = discord.Embed(
                 title="🔊 음성 채널 입장",
                 description=f"{member.mention} 님이 음성 채널 {target_channel_mention}에 입장했습니다.",
-                color=discord.Color.blue(),
+                color=discord.Color.green(),
                 timestamp=datetime.now()
             )
             await log_channel.send(embed=embed)
@@ -92,10 +92,12 @@ class VoiceLogger:
             after_channel_mention = after_channel.mention if after_channel else "알 수 없는 채널"
             embed = discord.Embed(
                 title="🔄 음성 채널 이동",
-                description=f"{member.mention} 님이 음성 채널을 {before_channel_mention}에서 {after_channel_mention}로 이동했습니다.",
-                color=discord.Color.gold(),
+                color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
+            embed.add_field(name="대상", value=member.mention, inline=False)
+            embed.add_field(name="기존 채널", value=before_channel_mention, inline=False)
+            embed.add_field(name="이동 채널", value=after_channel_mention, inline=False)
             await log_channel.send(embed=embed)
 
     @staticmethod
@@ -107,7 +109,7 @@ class VoiceLogger:
             embed = discord.Embed(
                 title="🔇 음성 채널 퇴장",
                 description=f"{member.mention} 님이 음성 채널 {target_channel_mention}에서 퇴장했습니다.",
-                color=discord.Color.purple(),
+                color=discord.Color.red(),
                 timestamp=datetime.now()
             )
             await log_channel.send(embed=embed)
