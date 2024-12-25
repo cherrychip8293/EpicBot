@@ -80,6 +80,8 @@ class JoinModal(discord.ui.Modal, title="내전 참여"):
             nickname = self.nickname.value.strip()
             line = self.line.value.strip()
 
+            logging.info(f"내전 참여 시도 - 디스코드: {interaction.user.name}, 게임닉네임: {nickname}, 라인: {line}")
+
             # 멤버 시트에서 닉네임과 태그를 완전히 매칭
             member_data = sheets_manager.get_values(sheet_name="MEMBER", range_notation="C:D")
             member_row = next(
@@ -91,32 +93,78 @@ class JoinModal(discord.ui.Modal, title="내전 참여"):
             )
 
             if not member_row:
+                logging.warning(f"멤버 매칭 실패 - 닉네임: {nickname}")
                 await interaction.followup.send("닉네임#태그를 찾을 수 없습니다.", ephemeral=True)
                 return
 
             # 멤버 정보
             member_number = member_row[0].lstrip("'").strip()  # 순번
             full_nickname = member_row[1].strip()  # 닉네임 (태그 포함)
+            
+            logging.info(f"멤버 매칭 성공 - 순번: {member_number}, 닉네임: {full_nickname}")
 
             # 내전 시트에 데이터 추가
             if ongoing_war.current_sheet:
-                start_row = 5 + len(ongoing_war.participants)  # 시작 행
+                logging.info(f"현재 활성화된 시트: {ongoing_war.current_sheet}")
+                
+                # W, X, Y열의 데이터를 함께 가져오기
+                sheet_data = sheets_manager.get_values(
+                    sheet_name=ongoing_war.current_sheet,
+                    range_notation="W5:Y100"  # 범위를 더 넓게 설정
+                )
+                
+                logging.debug("=== 현재 시트 데이터 ===")
+                for idx, row in enumerate(sheet_data, start=5):
+                    logging.debug(f"행 {idx}: {row}")
+                
+                # 첫 번째 빈 행 찾기
+                empty_row = None
+                for idx, row in enumerate(sheet_data, start=5):
+                    # 행이 완전히 비어있는지 확인
+                    is_empty = (
+                        not row or  # 행이 없는 경우
+                        len(row) == 0 or  # 빈 리스트인 경우
+                        all(not cell or str(cell).strip() == "" for cell in row)  # 모든 셀이 비어있는 경우
+                    )
+                    if is_empty:
+                        empty_row = idx
+                        break
+                
+                logging.info(f"찾은 빈 행 번호: {empty_row}")
+                
+                if empty_row is None:
+                    # 데이터의 마지막 행 다음을 사용
+                    empty_row = len(sheet_data) + 5  # 시작 인덱스(5)를 고려하여 계산
+                    logging.info(f"마지막 이후 행 사용: {empty_row}")
+
+                # 빈 행에 데이터 추가
                 sheets_manager.update_cell(
                     sheet_name=ongoing_war.current_sheet,
-                    start_column="W",  # 순번 열
-                    start_row=start_row,
-                    values=[[member_number, full_nickname, line]]  # 닉네임에 태그 포함
+                    start_column="W",
+                    start_row=empty_row,
+                    values=[[member_number, full_nickname, line]]
                 )
+                
+                logging.info(f"시트 업데이트 완료 - 행: {empty_row}, 데이터: [{member_number}, {full_nickname}, {line}]")
             else:
+                logging.error("활성화된 내전 시트 없음")
                 await interaction.followup.send("내전 시트가 활성화되지 않았습니다.", ephemeral=True)
                 return
 
             # 참여자 목록에 추가
             ongoing_war.participants.append({
                 "디스코드 닉네임": interaction.user.name,
-                "게임 닉네임": full_nickname,  # 태그 포함된 닉네임 저장
+                "게임 닉네임": full_nickname,
                 "라인": line
             })
+            
+            logging.info(f"참여자 목록 업데이트 완료 - 현재 참여자 수: {len(ongoing_war.participants)}")
+            logging.info("=== 현재 참여자 목록 ===")
+            for idx, participant in enumerate(ongoing_war.participants, 1):
+                logging.info(f"{idx}. 디스코드: {participant['디스코드 닉네임']}, "
+                           f"게임닉네임: {participant['게임 닉네임']}, "
+                           f"라인: {participant['라인']}")
+            logging.info("=====================")
 
             await interaction.followup.send(f"{interaction.user.mention} 님의 참여가 기록되었습니다.", ephemeral=True)
         except Exception as e:
