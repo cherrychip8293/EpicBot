@@ -42,7 +42,7 @@ class MessageLogger:
             target_channel_mention = target_channel.mention if target_channel else "알 수 없는 채널"
             embed = discord.Embed(
                 title="🗑️ 메시지 삭제",
-                color=discord.Color.orange(),
+                color=discord.Color.red(),
                 timestamp=datetime.now()
             )
             embed.add_field(name="채널", value=target_channel_mention, inline=False)
