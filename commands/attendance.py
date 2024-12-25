@@ -67,20 +67,37 @@ async def check_and_award_role(interaction_or_message, user: discord.Member, use
                     await interaction_or_message.channel.send(
                         f"{user.mention}, 축하합니다! 출석 {required_count}회를 달성하여 역할 `{role.name}`을 지급받았습니다! 🎉"
                     )
+                print(f"Role {role.name} ({role_id}) awarded to {user.display_name}.")
                 break
 
     # Google Sheets 업데이트
     try:
         nickname = user.display_name
-        if awarded_role:
+        member_data = sheets_manager.get_row_by_value(
+            sheet_name="MEMBER",
+            column_name="D",
+            value=nickname
+        )
+
+        if member_data:
+            row_index = member_data['row_index']
             increment_value = ROLE_INCREMENT_VALUES.get(awarded_role, 0)
-            sheets_manager.increment_sheet_value(
-                sheet_name="MEMBER",
-                nickname_column="D",
-                target_column="F",
-                nickname=nickname,
-                increment_value=increment_value,
-            )
+            if increment_value > 0:
+                current_value = sheets_manager.get_cell_value(
+                    sheet_name="MEMBER",
+                    row=row_index,
+                    column_name="N"
+                )
+                updated_value = (int(current_value) if current_value.isdigit() else 0) + increment_value
+                sheets_manager.update_cell(
+                    sheet_name="MEMBER",
+                    row=row_index,
+                    column_name="N",
+                    value=updated_value
+                )
+                print(f"Updated Google Sheets: Row {row_index}, Column N. Old Value: {current_value}, Increment: {increment_value}, New Value: {updated_value}.")
+        else:
+            print(f"디스코드 닉네임 {nickname}에 해당하는 데이터가 Google Sheets에서 발견되지 않았습니다.")
     except Exception as e:
         print(f"Google Sheets 업데이트 중 오류 발생: {e}")
 
