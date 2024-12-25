@@ -6,6 +6,7 @@ from event.GoogleSheetsManager import GoogleSheetsManager
 from shop.Mileage_shop import PersistentShopView  # PersistentShopView를 import
 from commands.war import WarView, initialize_ongoing_war  # WarView를 import
 from commands.information import InfoChangeView
+from log.logging import ServerLogger, VoiceLogger, MessageLogger, RoleLogger
 import os
 
 # 로깅 설정
@@ -122,6 +123,24 @@ class CustomBot(discord.Client):
             logging.info(f"서버 '{guild.name}'에 연결됨")
         else:
             logging.warning(f"경고: ID {GUILD_ID}인 서버를 찾을 수 없음")
+
+    async def on_member_join(self, member):
+        await ServerLogger.log_member_join(self, member.name)
+
+    async def on_member_remove(self, member):
+        await ServerLogger.log_member_leave(self, member.name)
+
+    async def on_message_delete(self, message):
+        await MessageLogger.log_message_delete(
+            self, message.channel.name, message.content, message.author.name
+        )
+
+    async def on_voice_state_update(self, member, before, after):
+        if before.channel != after.channel:
+            if after.channel:
+                await VoiceLogger.log_voice_join(self, member.name, after.channel.name)
+            if before.channel:
+                await VoiceLogger.log_voice_leave(self, member.name, before.channel.name)
 
 
 if __name__ == "__main__":
