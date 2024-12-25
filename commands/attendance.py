@@ -4,8 +4,12 @@ from discord import app_commands, Interaction
 import discord
 from discord.ext import commands
 import os
+import logging
 from dotenv import load_dotenv
 from event.GoogleSheetsManager import GoogleSheetsManager
+
+# 로깅 설정
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Google Sheets 설정
 SERVICE_ACCOUNT_FILE = "resources/service_account.json"
@@ -67,39 +71,45 @@ async def check_and_award_role(interaction_or_message, user: discord.Member, use
                     await interaction_or_message.channel.send(
                         f"{user.mention}, 축하합니다! 출석 {required_count}회를 달성하여 역할 `{role.name}`을 지급받았습니다! 🎉"
                     )
-                print(f"Role {role.name} ({role_id}) awarded to {user.display_name}.")
+                logging.info(f"[역할 지급] 대상: {user.display_name}, 지급된 역할: {role.name}, 출석 횟수: {user_count}")
                 break
 
     # Google Sheets 업데이트
     try:
-        nickname = user.display_name
-        member_data = sheets_manager.get_row_by_value(
-            sheet_name="MEMBER",
-            column_name="D",
-            value=nickname
+        raw_nickname = user.display_name
+        nickname = sheets_manager.clean_nickname(raw_nickname)
+
+        if not nickname:
+            logging.info(f"[닉네임 비어있음] 원본 닉네임: {raw_nickname}")
+            return
+
+        member_data = sheets_manager.get_values(sheet_name="MEMBER", range_notation="D:D")
+        member_row = next(
+            (
+                row for row in member_data
+                if len(row) >= 1 and row[0].split('#')[0].strip() == nickname
+            ),
+            None
         )
 
-        if member_data:
-            row_index = member_data['row_index']
+        if member_row:
+            row_index = member_data.index(member_row) + 1
             increment_value = ROLE_INCREMENT_VALUES.get(awarded_role, 0)
             if increment_value > 0:
-                current_value = sheets_manager.get_cell_value(
-                    sheet_name="MEMBER",
-                    row=row_index,
-                    column_name="N"
-                )
-                updated_value = (int(current_value) if current_value.isdigit() else 0) + increment_value
+                current_values = sheets_manager.get_values(sheet_name="MEMBER", range_notation=f"N{row_index}:N{row_index}")
+                current_value = int(current_values[0][0]) if current_values and current_values[0] else 0
+                updated_value = current_value + increment_value
                 sheets_manager.update_cell(
                     sheet_name="MEMBER",
-                    row=row_index,
-                    column_name="N",
-                    value=updated_value
+                    start_column="N",
+                    start_row=row_index,
+                    values=[[updated_value]]
                 )
-                print(f"Updated Google Sheets: Row {row_index}, Column N. Old Value: {current_value}, Increment: {increment_value}, New Value: {updated_value}.")
+                logging.info(f"[출석] 대상: {nickname}, 이전 값: {current_value}, 추가 값: {increment_value}, 갱신된 값: {updated_value}")
         else:
-            print(f"디스코드 닉네임 {nickname}에 해당하는 데이터가 Google Sheets에서 발견되지 않았습니다.")
+            logging.info(f"[출석] Google Sheets에서 닉네임 '{nickname}'을(를) 찾을 수 없습니다.")
     except Exception as e:
-        print(f"Google Sheets 업데이트 중 오류 발생: {e}")
+        logging.error(f"[오류 발생] Google Sheets 업데이트 중 오류: {e}")
 
 # 슬래시 커맨드
 @app_commands.command(name="출석", description="오늘의 출석을 체크합니다.")

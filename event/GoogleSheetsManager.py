@@ -1,4 +1,5 @@
 import logging
+import re
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from googleapiclient.errors import HttpError
@@ -83,6 +84,16 @@ class GoogleSheetsManager:
                         break
         except Exception as e:
             print(f"참여/우승 횟수 업데이트 오류: {e}")
+
+    def clean_nickname(self, nickname: str) -> str:
+        """
+        닉네임에서 숫자, 성별 구분 텍스트, 롤 티어 제거
+        """
+        nickname = re.sub(r"\d", "", nickname)  # 숫자 제거
+        nickname = re.sub(r"(?:남|여)", "", nickname)  # 남/여 제거
+        nickname = re.sub(r"(?:B|S|G|P|E|D|M|GM|C)", "", nickname)  # 롤 티어 제거
+        nickname = nickname.split('#')[0]  # # 태그 제거
+        return nickname.strip()
 
     def update_cell(self, sheet_name, start_column, start_row, values):
         """
