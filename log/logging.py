@@ -1,6 +1,6 @@
+from enum import member
 import discord
 from discord.ext import commands
-import logging
 
 # 로깅 설정
 loggers = {}
@@ -16,21 +16,21 @@ DISCORD_CHANNELS = {
 # 서버 입퇴장 로그 기능
 class ServerLogger:
     @staticmethod
-    async def log_member_join(bot, member_id):
+    async def log_member_join(bot):
         channel = bot.get_channel(DISCORD_CHANNELS["server"])
         embed = discord.Embed(
             title="✅ 회원 입장",
-            description=f"<@{member_id}> 님이 서버에 입장했습니다.",
+            description=f"{member.mention} 님이 서버에 입장했습니다.",
             color=discord.Color.green()
         )
         await channel.send(embed=embed)
 
     @staticmethod
-    async def log_member_leave(bot, member_id):
+    async def log_member_leave(bot):
         channel = bot.get_channel(DISCORD_CHANNELS["server"])
         embed = discord.Embed(
             title="❌ 회원 퇴장",
-            description=f"<@{member_id}> 님이 서버에서 퇴장했습니다.",
+            description=f"{member.mention} 님이 서버에서 퇴장했습니다.",
             color=discord.Color.red()
         )
         await channel.send(embed=embed)
@@ -38,21 +38,21 @@ class ServerLogger:
 # 음성 채널 로그 기능
 class VoiceLogger:
     @staticmethod
-    async def log_voice_join(bot, member_id, channel_name):
+    async def log_voice_join(bot, channel_name):
         channel = bot.get_channel(DISCORD_CHANNELS["voice"])
         embed = discord.Embed(
             title="🔊 음성 채널 입장",
-            description=f"<@{member_id}> 님이 **{channel_name}**에 입장했습니다.",
+            description=f"{member.mention} 님이 **{channel_name}**에 입장했습니다.",
             color=discord.Color.blue()
         )
         await channel.send(embed=embed)
 
     @staticmethod
-    async def log_voice_leave(bot, member_id, channel_name):
+    async def log_voice_leave(bot, channel_name):
         channel = bot.get_channel(DISCORD_CHANNELS["voice"])
         embed = discord.Embed(
             title="🔇 음성 채널 퇴장",
-            description=f"<@{member_id}> 님이 **{channel_name}**에서 퇴장했습니다.",
+            description=f"{member.mention} 님이 **{channel_name}**에서 퇴장했습니다.",
             color=discord.Color.orange()
         )
         await channel.send(embed=embed)
@@ -60,11 +60,11 @@ class VoiceLogger:
 # 메시지 삭제 로그 기능
 class MessageLogger:
     @staticmethod
-    async def log_message_delete(bot, channel_name, message_content, author_id):
+    async def log_message_delete(bot, channel_name, message_content):
         channel = bot.get_channel(DISCORD_CHANNELS["message"])
         embed = discord.Embed(
             title="🗑️ 메시지 삭제",
-            description=f"**채널**: {channel_name}\n**작성자**: <@{author_id}>\n**내용**: {message_content}",
+            description=f"**채널**: {channel_name}\n**작성자**: {member.mention}\n**내용**: {message_content}",
             color=discord.Color.dark_red()
         )
         await channel.send(embed=embed)
@@ -72,21 +72,21 @@ class MessageLogger:
 # 역할 업데이트 로그 기능
 class RoleLogger:
     @staticmethod
-    async def log_role_add(bot, member_id, role_name):
+    async def log_role_add(bot, role_name):
         channel = bot.get_channel(DISCORD_CHANNELS["roles"])
         embed = discord.Embed(
             title="➕ 역할 추가",
-            description=f"<@{member_id}> 님에게 역할 **{role_name}**이(가) 추가되었습니다.",
+            description=f"{member.mention}님에게 역할 **{role_name}**이(가) 추가되었습니다.",
             color=discord.Color.green()
         )
         await channel.send(embed=embed)
 
     @staticmethod
-    async def log_role_remove(bot, member_id, role_name):
+    async def log_role_remove(bot, role_name):
         channel = bot.get_channel(DISCORD_CHANNELS["roles"])
         embed = discord.Embed(
             title="➖ 역할 제거",
-            description=f"<@{member_id}> 님의 역할 **{role_name}**이(가) 제거되었습니다.",
+            description=f"{member.mention}님의 역할 **{role_name}**이(가) 제거되었습니다.",
             color=discord.Color.red()
         )
         await channel.send(embed=embed)
