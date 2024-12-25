@@ -125,23 +125,65 @@ class CustomBot(discord.Client):
             logging.warning(f"경고: ID {GUILD_ID}인 서버를 찾을 수 없음")
 
     async def on_member_join(self, member):
-        await ServerLogger.log_member_join(self, member.name)
+        await ServerLogger.log_member_join(self, member)
 
     async def on_member_remove(self, member):
-        await ServerLogger.log_member_leave(self, member.name)
+        await ServerLogger.log_member_leave(self, member)
 
     async def on_message_delete(self, message):
-        await MessageLogger.log_message_delete(
-            self, message.channel.name, message.content, message.author.name
-        )
+        # 메시지 삭제 이벤트 처리
+        if message.author and hasattr(message.author, "mention"):
+            await MessageLogger.log_message_delete(
+                self,
+                message.channel.id,  # 채널 ID 전달
+                message.content,
+                message.author  # author 객체 전달
+            )
+        else:
+            logging.warning("Message author is not a valid object for mention.")
+
+    async def on_message_edit(self, before, after):
+        if before.content != after.content:
+            await MessageLogger.log_message_edit(
+                self,
+                before.channel.id,  # 채널 ID 전달
+                before.content,  # 이전 내용
+                after.content,  # 수정된 내용
+                before.author  # 작성자 객체 전달
+            )
 
     async def on_voice_state_update(self, member, before, after):
         if before.channel != after.channel:
             if after.channel:
-                await VoiceLogger.log_voice_join(self, member.name, after.channel.name)
-            if before.channel:
-                await VoiceLogger.log_voice_leave(self, member.name, before.channel.name)
+                if before.channel:
+                    await VoiceLogger.log_voice_move(
+                        self,
+                        member,
+                        before.channel.id,  # 채널 ID 전달
+                        after.channel.id  # 채널 ID 전달
+                    )
+                else:
+                    await VoiceLogger.log_voice_join(
+                        self,
+                        member,
+                        after.channel.id  # 채널 ID 전달
+                    )
+            if before.channel and not after.channel:
+                await VoiceLogger.log_voice_leave(
+                    self,
+                    member,
+                    before.channel.id  # 채널 ID 전달
+                )
 
+    async def on_member_update(self, before, after):
+        added_roles = [role for role in after.roles if role not in before.roles]
+        removed_roles = [role for role in before.roles if role not in after.roles]
+
+        for role in added_roles:
+            await RoleLogger.log_role_update(self, after, role.name, "추가")
+
+        for role in removed_roles:
+            await RoleLogger.log_role_update(self, after, role.name, "제거")
 
 if __name__ == "__main__":
     try:
