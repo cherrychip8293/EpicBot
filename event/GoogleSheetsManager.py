@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from googleapiclient.errors import HttpError
@@ -20,6 +21,32 @@ class GoogleSheetsManager:
         self.scopes = ['https://www.googleapis.com/auth/spreadsheets']
         self.credentials = Credentials.from_service_account_file(service_account_file, scopes=self.scopes)
         self.service = build('sheets', 'v4', credentials=self.credentials)
+
+    def update_range(self, range_name, values):
+        """
+        특정 범위의 셀 값을 업데이트합니다.
+        
+        Args:
+            range_name (str): 업데이트할 범위 (예: 'Sheet1!A1:B2')
+            values (list): 업데이트할 값들의 2차원 리스트
+            
+        Returns:
+            dict: API 응답 결과
+        """
+        try:
+            body = {
+                'values': values
+            }
+            result = self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=range_name,
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            return result
+        except Exception as e:
+            logging.error(f"시트 업데이트 중 오류 발생: {str(e)}")
+            raise
 
     def _authenticate(self):
         from google.oauth2.service_account import Credentials
@@ -101,7 +128,7 @@ class GoogleSheetsManager:
         :param sheet_name: 시트 이름
         :param start_column: 시작 열 (예: W)
         :param start_row: 시작 행 (예: 5)
-        :param values: 입력할 데이터 리스트
+        :param values: 입력할 데이터 리스트 (2차원 배열)
         """
         try:
             def safe_convert(value):
@@ -120,25 +147,32 @@ class GoogleSheetsManager:
             # 값 변환
             formatted_values = [[safe_convert(v) for v in row] for row in values]
 
+            # 열 및 행 범위 계산
+            end_column = chr(ord(start_column) + len(formatted_values[0]) - 1) if formatted_values else start_column
+            end_row = start_row + len(formatted_values) - 1
+
             # Google Sheets 범위 지정
-            range_notation = f"{sheet_name}!{start_column}{start_row}"
+            range_notation = f"{sheet_name}!{start_column}{start_row}:{end_column}{end_row}"
 
             # API 요청
             response = self.service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_notation,
-                valueInputOption="USER_ENTERED",  # 자동 형식 변환
+                valueInputOption="RAW",  # 강제 업데이트
                 body={'values': formatted_values}
             ).execute()
 
-            # 업데이트 후 값 검증
+
+            # 업데이트된 값을 다시 확인
             updated_values = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
                 range=range_notation
             ).execute()
 
+            return response
+
         except Exception as e:
-            print(f"Google Sheets 업데이트 중 오류 발생: {e}")
+            logging.error(f"Google Sheets 업데이트 중 오류 발생: {e}")
             raise
 
     def append_row(self, sheet_name, values):
