@@ -1,60 +1,60 @@
+import datetime
 import logging
+import re
+from typing import List
 import discord
+from discord.ext import commands
 from discord import app_commands
 from dotenv import load_dotenv
 from event.GoogleSheetsManager import GoogleSheetsManager
-from shop.Mileage_shop import PersistentShopView  # PersistentShopView를 import
-from commands.war import WarView, initialize_ongoing_war  # WarView를 import
-from commands.information import InfoChangeView
+from shop.Mileage_shop import PersistentShopView
+from commands.war import WarView, initialize_ongoing_war, WarCommand
+from commands.information import InfoChangeView, InfoCommands
 from log.logging import ServerLogger, VoiceLogger, MessageLogger, RoleLogger
+from commands.attendance import AttendanceCommands
+from shop.Mileage_shop import PersistentShopView
 import os
+import pytz
 
 # 로깅 설정
-logging.basicConfig(filename='app.log', level=logging.INFO)
+logging.basicConfig(
+    filename='app.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+logging.getLogger("discord").setLevel(logging.WARNING)
 
 # 환경 변수 로드
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 GUILD_ID = int(os.getenv("GUILD_ID"))
 
+# Google Sheets 설정
 SERVICE_ACCOUNT_FILE = 'resources/service_account.json'
 SPREADSHEET_ID = '1AYSWQwLOA-EvMJzJ7ros27OEzrTd2hERlI2WJX32RBE'
+
+# 시간대 설정
+seoul_tz = pytz.timezone("Asia/Seoul")
 
 # Google Sheets 매니저 초기화
 sheets_manager = GoogleSheetsManager(SERVICE_ACCOUNT_FILE, SPREADSHEET_ID)
 
-# 봇 설정
-intents = discord.Intents.default()
-intents.message_content = True
-intents.messages = True
-intents.guilds = True
-intents.members = True
 class PersistentViewManager:
     def __init__(self, bot):
         self.bot = bot
         self.views = []
 
     def add_view(self, view):
-        """
-        View를 추가하고 봇에 등록
-        """
         self.views.append(view)
         self.bot.add_view(view)
 
     async def initialize_views(self):
-        """
-        Google Sheets 데이터를 사용하여 View 초기화 및 추가 View 등록.
-        """
         try:
-            # WarView 등록 (먼저 등록)
             war_view = WarView()
             self.add_view(war_view)
             logging.info("WarView 등록 완료.")
-            info_view = InfoChangeView()
-            self.add_view(info_view)
-            logging.info("infoView 등록 완료")
 
-            # 상점 View 등록
             shop_data = sheets_manager.get_values(sheet_name="상점", range_notation="J2:L100")
             if shop_data:
                 shop_view = PersistentShopView(shop_data=shop_data)
@@ -63,64 +63,98 @@ class PersistentViewManager:
             else:
                 logging.error("상점 데이터를 불러올 수 없습니다.")
 
+            info_view = InfoChangeView()
+            self.add_view(info_view)
+            logging.info("InfoChangeView 등록 완료.")
+
         except Exception as e:
             logging.error(f"PersistentViewManager 초기화 중 오류 발생: {e}")
 
-
-class CustomBot(discord.Client):
+class CustomBot(commands.Bot):
     def __init__(self):
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
-        self.view_manager = PersistentViewManager(self)
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.messages = True
+        intents.guilds = True
+        intents.members = True
+        intents.voice_states = True
+        
+        super().__init__(command_prefix="!", intents=intents)
+        self.view_manager = None  # setup_hook에서 초기화
+        self.guild = None
+        self._synced = False
+        self.setup_done = False
 
     async def setup_hook(self):
         if not GUILD_ID:
-            logging.error("GUILD_ID가 설정되지 않았습니다. 초기화를 건너뜁니다.")
+            logging.error("GUILD_ID가 설정되지 않았습니다.")
             return
 
         try:
-            logging.info("명령어 초기화 및 동기화 시작...")
-            guild = discord.Object(id=GUILD_ID)
+            self.guild = self.get_guild(GUILD_ID) or discord.Object(id=GUILD_ID)
+            self.view_manager = PersistentViewManager(self)
 
-            # 먼저 persistent view 등록
-            await self.view_manager.initialize_views()
-            logging.info("Persistent views 등록 완료")
-
-            # 내전 상태 초기화
+            # 내전 활성화 확인 (initialize_ongoing_war 호출)
             initialize_ongoing_war()
-            logging.info("내전 상태 초기화 완료")
+            logging.info("내전 활성화 상태 확인 완료")
+            
+            # 확장 기능 로드
+            extensions: List[str] = [
+                "commands.attendance",
+                "commands.information",
+                "commands.war",
+                "commands.attendance_top",
+                "shop.Mileage_shop"
+            ]
+            
+            for extension in extensions:
+                try:
+                    await self.load_extension(extension)
+                    logging.info(f"{extension} 확장 기능 로드 완료")
+                except Exception as e:
+                    logging.error(f"{extension} 로드 중 오류 발생: {e}")
+                    continue
 
-            # 기존 명령어 제거 후 재등록
-            self.tree.clear_commands(guild=guild)
-
-            # 명령어 등록
-            from commands.attendance import 출석
-            from commands.attendance_top import 순위
-            from commands.war import WarCommand
-            from commands.information import 정보변경메시지
-            from shop.Mileage_shop import shop_notification
-
-            self.tree.add_command(출석, guild=guild)
-            self.tree.add_command(순위, guild=guild)
-            self.tree.add_command(WarCommand(), guild=guild)
-            self.tree.add_command(정보변경메시지, guild=guild)
-            self.tree.add_command(shop_notification, guild=guild)
-
-            logging.info("새 명령어 등록 완료.")
-
-            # 명령어 동기화
-            await self.tree.sync(guild=guild)
-            logging.info("명령어 동기화 완료!")
-
+            # View 초기화
+            await self.view_manager.initialize_views()
+            
+            self.setup_done = True
+            
         except Exception as e:
-            logging.error(f"명령어 설정 중 오류 발생: {e}", exc_info=True)
+            logging.error(f"봇 설정 중 오류 발생: {e}", exc_info=True)
+            self.setup_done = False
 
     async def on_ready(self):
+     if not self._synced:
+        try:
+            logging.info("명령어 동기화 시작...")
+            
+            # GUILD ID가 설정된 경우 해당 길드에만 동기화
+            if GUILD_ID:
+                guild = discord.Object(id=GUILD_ID)
+                commands_synced = await self.tree.sync(guild=guild)
+                logging.info(f"길드 ID {GUILD_ID}에 동기화된 명령어 수: {len(commands_synced)}")
+            else:
+                # GUILD ID가 없으면 글로벌 동기화
+                commands_synced = await self.tree.sync()
+                logging.info(f"글로벌로 동기화된 명령어 수: {len(commands_synced)}")
+            
+            self._synced = True
+        except Exception as e:
+            logging.error(f"명령어 동기화 중 오류 발생: {e}", exc_info=True)
+
         logging.info(f"\n{self.user} 으로 로그인했습니다!")
         logging.info(f"서버 ID: {GUILD_ID}")
+        
         guild = self.get_guild(GUILD_ID)
         if guild:
             logging.info(f"서버 '{guild.name}'에 연결됨")
+            await self.change_presence(
+                activity=discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name="길드원 관리"
+                )
+            )
         else:
             logging.warning(f"경고: ID {GUILD_ID}인 서버를 찾을 수 없음")
 
@@ -131,25 +165,22 @@ class CustomBot(discord.Client):
         await ServerLogger.log_member_leave(self, member)
 
     async def on_message_delete(self, message):
-        # 메시지 삭제 이벤트 처리
         if message.author and hasattr(message.author, "mention"):
             await MessageLogger.log_message_delete(
                 self,
-                message.channel.id,  # 채널 ID 전달
+                message.channel.id,
                 message.content,
-                message.author  # author 객체 전달
+                message.author
             )
-        else:
-            logging.warning("Message author is not a valid object for mention.")
 
     async def on_message_edit(self, before, after):
         if before.content != after.content:
             await MessageLogger.log_message_edit(
                 self,
-                before.channel.id,  # 채널 ID 전달
-                before.content,  # 이전 내용
-                after.content,  # 수정된 내용
-                before.author  # 작성자 객체 전달
+                before.channel.id,
+                before.content,
+                after.content,
+                before.author
             )
 
     async def on_voice_state_update(self, member, before, after):
@@ -159,20 +190,20 @@ class CustomBot(discord.Client):
                     await VoiceLogger.log_voice_move(
                         self,
                         member,
-                        before.channel.id,  # 채널 ID 전달
-                        after.channel.id  # 채널 ID 전달
+                        before.channel.id,
+                        after.channel.id
                     )
                 else:
                     await VoiceLogger.log_voice_join(
                         self,
                         member,
-                        after.channel.id  # 채널 ID 전달
+                        after.channel.id
                     )
-            if before.channel and not after.channel:
+            elif before.channel:
                 await VoiceLogger.log_voice_leave(
                     self,
                     member,
-                    before.channel.id  # 채널 ID 전달
+                    before.channel.id
                 )
 
     async def on_member_update(self, before, after):
@@ -185,11 +216,17 @@ class CustomBot(discord.Client):
         for role in removed_roles:
             await RoleLogger.log_role_update(self, after, role.name, "제거")
 
-if __name__ == "__main__":
+def main():
     try:
         if not TOKEN:
             raise ValueError("Discord 토큰이 설정되지 않았습니다.")
+        
         bot = CustomBot()
-        bot.run(TOKEN)
+        bot.run(TOKEN, log_handler=None)
+        
     except Exception as e:
-        logging.error(f"봇 실행 중 오류 발생: {e}")
+        logging.critical(f"봇 실행 중 치명적 오류 발생: {e}", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    main()
