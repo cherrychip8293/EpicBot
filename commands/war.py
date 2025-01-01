@@ -1,6 +1,8 @@
 import logging
+import time
 from discord import app_commands
 import discord
+from discord.ext import commands
 from event.GoogleSheetsManager import GoogleSheetsManager
 from datetime import datetime
 import os
@@ -28,28 +30,53 @@ class OngoingWar:
 ongoing_war = OngoingWar()
 
 def initialize_ongoing_war():
-    """
-    봇이 재시작될 때 기존의 내전 상태를 복구합니다.
-    """
     try:
         sheet_names = sheets_manager.get_sheet_names()
         if not sheet_names:
-            logging.error("시트 이름 목록을 가져오지 못했습니다. 스프레드시트 API를 확인하세요.")
-            return  # 함수 종료
+            return 0
 
-        logging.debug(f"가져온 시트 이름 목록: {sheet_names}")
-
-        today_date = datetime.now().strftime('%Y-%m-%d')
+        today_date = time.strftime('%Y-%m-%d')
         active_sheet_name = f"내전-{today_date}"
 
         if active_sheet_name in sheet_names:
             ongoing_war.status = True
             ongoing_war.current_sheet = active_sheet_name
-            logging.info(f"내전 활성화 상태 복구: {active_sheet_name}")
+
+            participants = sheets_manager.get_values(
+                sheet_name=active_sheet_name, range_notation="X:X"
+            )
+            if participants is None:
+                return 0
+
+            valid_participants = []
+            for idx, row in enumerate(participants, start=1):
+                if row and len(row) == 1 and is_valid_participant(row[0].strip()):
+                    valid_participants.append({"게임 닉네임": row[0].strip()})
+
+            ongoing_war.participants = valid_participants
+            logging.info(f"활성화된 시트 '{active_sheet_name}'의 참가자 수: {len(valid_participants)}명")
+            return len(valid_participants)
         else:
             logging.info("내전 활성화 상태가 발견되지 않았습니다.")
+            return 0
     except Exception as e:
         logging.error(f"내전 상태 복구 중 오류 발생: {e}", exc_info=True)
+        return 0
+
+def is_valid_participant(value):
+    """
+    주어진 데이터가 유효한 참가자 데이터인지 확인하는 함수.
+    """
+    if not value:
+        return False
+    if value.lower() in {"닉네임", "팀장지원금", "시트등록", "마감코드", "내전마감"}:
+        return False
+    if value.startswith("https://"):
+        return False
+    # 닉네임 형식 검사 (예: "이름#태그" 형식)
+    if "#" in value and len(value.split("#")) == 2:
+        return True
+    return False
 
 
 class JoinModal(discord.ui.Modal, title="내전 참여"):
@@ -74,20 +101,19 @@ class JoinModal(discord.ui.Modal, title="내전 참여"):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            # 초기 응답 연장
             await interaction.response.defer(ephemeral=True)
 
             nickname = self.nickname.value.strip()
             line = self.line.value.strip()
 
-            logging.info(f"내전 참여 시도 - 디스코드: {interaction.user.name}, 게임닉네임: {nickname}, 라인: {line}")
+            logging.info(f"내전 참여 요청 - 게임 닉네임: {nickname}, 라인: {line}")
 
             # 멤버 시트에서 닉네임과 태그를 완전히 매칭
             member_data = sheets_manager.get_values(sheet_name="MEMBER", range_notation="C:D")
             member_row = next(
                 (
                     row for row in member_data
-                    if len(row) >= 2 and row[1].strip() == nickname
+                    if len(row) >= 2 and row[1].strip().lower() == nickname.lower()
                 ),
                 None
             )
@@ -99,76 +125,47 @@ class JoinModal(discord.ui.Modal, title="내전 참여"):
 
             # 멤버 정보
             member_number = member_row[0].lstrip("'").strip()  # 순번
-            full_nickname = member_row[1].strip()  # 닉네임 (태그 포함)
-            
-            logging.info(f"멤버 매칭 성공 - 순번: {member_number}, 닉네임: {full_nickname}")
+            full_nickname = member_row[1].strip()
 
             # 내전 시트에 데이터 추가
             if ongoing_war.current_sheet:
-                logging.info(f"현재 활성화된 시트: {ongoing_war.current_sheet}")
-                
-                # W, X, Y열의 데이터를 함께 가져오기
                 sheet_data = sheets_manager.get_values(
                     sheet_name=ongoing_war.current_sheet,
-                    range_notation="W5:Y100"  # 범위를 더 넓게 설정
+                    range_notation="W5:Y100"
                 )
-                
-                logging.debug("=== 현재 시트 데이터 ===")
-                for idx, row in enumerate(sheet_data, start=5):
-                    logging.debug(f"행 {idx}: {row}")
-                
-                # 첫 번째 빈 행 찾기
-                empty_row = None
-                for idx, row in enumerate(sheet_data, start=5):
-                    # 행이 완전히 비어있는지 확인
-                    is_empty = (
-                        not row or  # 행이 없는 경우
-                        len(row) == 0 or  # 빈 리스트인 경우
-                        all(not cell or str(cell).strip() == "" for cell in row)  # 모든 셀이 비어있는 경우
-                    )
-                    if is_empty:
-                        empty_row = idx
-                        break
-                
-                logging.info(f"찾은 빈 행 번호: {empty_row}")
-                
-                if empty_row is None:
-                    # 데이터의 마지막 행 다음을 사용
-                    empty_row = len(sheet_data) + 5  # 시작 인덱스(5)를 고려하여 계산
-                    logging.info(f"마지막 이후 행 사용: {empty_row}")
 
-                # 빈 행에 데이터 추가
+                # 첫 번째 빈 행 찾기
+                empty_row = next(
+                    (idx for idx, row in enumerate(sheet_data, start=5) if not any(row)),
+                    len(sheet_data) + 5
+                )
+
                 sheets_manager.update_cell(
                     sheet_name=ongoing_war.current_sheet,
                     start_column="W",
                     start_row=empty_row,
                     values=[[member_number, full_nickname, line]]
                 )
-                
-                logging.info(f"시트 업데이트 완료 - 행: {empty_row}, 데이터: [{member_number}, {full_nickname}, {line}]")
+
+                logging.info(f"참여자 정보 추가 - 행: {empty_row}, 데이터: [{member_number}, {full_nickname}, {line}]")
             else:
                 logging.error("활성화된 내전 시트 없음")
                 await interaction.followup.send("내전 시트가 활성화되지 않았습니다.", ephemeral=True)
                 return
 
-            # 참여자 목록에 추가
-            ongoing_war.participants.append({
-                "디스코드 닉네임": interaction.user.name,
-                "게임 닉네임": full_nickname,
-                "라인": line
-            })
-            
-            logging.info(f"참여자 목록 업데이트 완료 - 현재 참여자 수: {len(ongoing_war.participants)}")
-            logging.info("=== 현재 참여자 목록 ===")
-            for idx, participant in enumerate(ongoing_war.participants, 1):
-                logging.info(f"{idx}. 디스코드: {participant['디스코드 닉네임']}, "
-                           f"게임닉네임: {participant['게임 닉네임']}, "
-                           f"라인: {participant['라인']}")
-            logging.info("=====================")
+            # 참여자 목록 업데이트
+            if not any(p['게임 닉네임'].lower() == full_nickname.lower() for p in ongoing_war.participants):
+                ongoing_war.participants.append({
+                    "게임 닉네임": full_nickname,
+                    "라인": line
+                })
+                logging.info(f"현재 참여자 수: {len(ongoing_war.participants)}")
+            else:
+                logging.warning(f"중복 참여 요청 - 닉네임: {full_nickname}")
 
-            await interaction.followup.send(f"{interaction.user.mention} 님의 참여가 기록되었습니다.", ephemeral=True)
+            await interaction.followup.send(f"{nickname} 님의 참여가 기록되었습니다.", ephemeral=True)
         except Exception as e:
-            logging.error("참여 기록 중 오류 발생: %s", e, exc_info=True)
+            logging.error("참여 기록 중 오류 발생", exc_info=True)
             await interaction.followup.send(f"참여 기록 중 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
 class CancelModal(discord.ui.Modal, title="참여 취소"):
@@ -265,6 +262,15 @@ class WarView(discord.ui.View):
         self.cancel_button.callback = self.cancel_callback
         self.add_item(self.cancel_button)
 
+        # 인원 확인 버튼
+        self.count_button = discord.ui.Button(
+            label="인원",
+            style=discord.ButtonStyle.gray,
+            custom_id="persistent_count_button"
+        )
+        self.count_button.callback = self.count_callback
+        self.add_item(self.count_button)
+
         # 관리 버튼 (관리자 전용)
         self.manage_button = discord.ui.Button(
             label="관리",
@@ -297,6 +303,50 @@ class WarView(discord.ui.View):
         # 관리 인터페이스 표시
         manage_view = ManageView()
         await interaction.response.send_message("관리 옵션을 선택하세요:", view=manage_view, ephemeral=True)
+
+    async def count_callback(self, interaction: discord.Interaction):
+     logging.debug(f"현재 참여자 목록: {ongoing_war.participants}")
+     if not ongoing_war.status:
+        await interaction.response.send_message("현재 활성화된 내전이 없습니다.", ephemeral=True)
+        return
+
+     participant_count = len(ongoing_war.participants)
+     logging.info(f"현재 참여 인원 확인 요청: {participant_count}명")
+     await interaction.response.send_message(f"현재 참여 인원: {participant_count}명", ephemeral=True)
+
+
+class CloseConfirmView(discord.ui.View):
+    def __init__(self, original_interaction: discord.Interaction):
+        super().__init__()
+        self.original_interaction = original_interaction
+
+    @discord.ui.button(label="확인", style=discord.ButtonStyle.red)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.defer(ephemeral=True)
+
+            if ongoing_war.current_sheet:
+                # 내전 기록 파일 생성
+                file_name = f"내전기록_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+                file_path = os.path.join("records", file_name)
+                sheets_manager.export_sheet_as_xlsx(ongoing_war.current_sheet, file_path)
+                ongoing_war.saved_files.append(file_path)
+
+                # 현재 시트 삭제
+                sheets_manager.delete_sheet(ongoing_war.current_sheet)
+                ongoing_war.reset()
+
+                await interaction.followup.send("내전이 성공적으로 닫혔습니다.", ephemeral=True)
+            else:
+                await interaction.followup.send("현재 활성화된 내전이 없습니다.", ephemeral=True)
+
+        except Exception as e:
+            logging.error("내전 닫기 중 오류: %s", e, exc_info=True)
+            await interaction.followup.send("내전 닫기 중 오류가 발생했습니다.", ephemeral=True)
+
+    @discord.ui.button(label="취소", style=discord.ButtonStyle.gray)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("내전 닫기가 취소되었습니다.", ephemeral=True)
 
 class ManageView(discord.ui.View):
     def __init__(self):
@@ -393,8 +443,6 @@ class ManageView(discord.ui.View):
         logging.error("기록 버튼 처리 중 오류 발생: %s", e, exc_info=True)
         await interaction.response.send_message("기록 다운로드 중 오류가 발생했습니다.", ephemeral=True)
 
-
-
     async def open_callback(self, interaction: discord.Interaction):
      if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("이 버튼은 관리자만 사용할 수 있습니다.", ephemeral=True)
@@ -418,33 +466,46 @@ class ManageView(discord.ui.View):
         await interaction.followup.send("내전을 열기 중 오류가 발생했습니다.", ephemeral=True)
 
 
+        # Start of Selection
     async def close_callback(self, interaction: discord.Interaction):
-     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("이 버튼은 관리자만 사용할 수 있습니다.", ephemeral=True)
-        return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("이 버튼은 관리자만 사용할 수 있습니다.", ephemeral=True)
+            return
 
-     try:
-        # 초기 응답 연장
-        await interaction.response.defer(ephemeral=True)
+        embed = discord.Embed(
+            title="내전 닫기 확인",
+            description="정말로 내전을 닫으시겠습니까?",
+            color=discord.Color.red()
+        )
+        confirm_view = CloseConfirmView(interaction)
+        await interaction.response.send_message(
+            embed=embed,
+            view=confirm_view,
+            ephemeral=True
+        )
 
-        if ongoing_war.current_sheet:
-            # 내전 기록 파일 생성
-            file_name = f"내전기록_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
-            file_path = os.path.join("records", file_name)
-            sheets_manager.export_sheet_as_xlsx(ongoing_war.current_sheet, file_path)
-            ongoing_war.saved_files.append(file_path)
+        try:
+            # 초기 응답 연장
+            await interaction.response.defer(ephemeral=True)
 
-            # 현재 시트 삭제
-            sheets_manager.delete_sheet(ongoing_war.current_sheet)
-            ongoing_war.reset()
+            if ongoing_war.current_sheet:
+                # 내전 기록 파일 생성
+                file_name = f"내전기록_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+                file_path = os.path.join("records", file_name)
+                sheets_manager.export_sheet_as_xlsx(ongoing_war.current_sheet, file_path)
+                ongoing_war.saved_files.append(file_path)
 
-            # 성공 메시지 전송
-            await interaction.followup.send("내전이 성공적으로 닫혔습니다.", ephemeral=True)
-        else:
-            await interaction.followup.send("현재 활성화된 내전이 없습니다.", ephemeral=True)
-     except Exception as e:
-        logging.error("내전 닫기 중 오류: %s", e, exc_info=True)
-        await interaction.followup.send("내전 닫기 중 오류가 발생했습니다.", ephemeral=True)
+                # 현재 시트 삭제
+                sheets_manager.delete_sheet(ongoing_war.current_sheet)
+                ongoing_war.reset()
+
+                # 성공 메시지 전송
+                await interaction.followup.send("내전이 성공적으로 닫혔습니다.", ephemeral=True)
+            else:
+                await interaction.followup.send("현재 활성화된 내전이 없습니다.", ephemeral=True)
+        except Exception as e:
+            logging.error("내전 닫기 중 오류: %s", e, exc_info=True)
+            await interaction.followup.send("내전 닫기 중 오류가 발생했습니다.", ephemeral=True)
 
 
     async def win_callback(self, interaction: discord.Interaction):
@@ -608,6 +669,7 @@ class WarCommand(app_commands.Group):
         await 채널.send(embed=embed, view=WarView())
         await interaction.response.send_message(f"{채널.mention} 채널에 메시지가 전송되었습니다.", ephemeral=True)
 
-async def setup(bot: discord.Client):
+
+async def setup(bot: commands.Bot):
     bot.add_view(WarView())
     bot.tree.add_command(WarCommand())
