@@ -8,11 +8,11 @@ from discord import app_commands
 from dotenv import load_dotenv
 from event.GoogleSheetsManager import GoogleSheetsManager
 from shop.Mileage_shop import PersistentShopView
+from shop.Warn_shop import Warn_ShopCommands, Warn_ShopView
 from commands.war import WarView, initialize_ongoing_war, WarCommand
 from commands.information import InfoChangeView, InfoCommands
 from log.logging import ServerLogger, VoiceLogger, MessageLogger, RoleLogger
 from commands.attendance import AttendanceCommands
-from shop.Mileage_shop import PersistentShopView
 import os
 import pytz
 
@@ -63,6 +63,11 @@ class PersistentViewManager:
             else:
                 logging.error("상점 데이터를 불러올 수 없습니다.")
 
+            filtered_data = [row for row in shop_data if len(row) >= 3 and row[0].isdigit()]
+            warn_shop_view = Warn_ShopView(shop_data=filtered_data)
+            self.add_view(warn_shop_view)
+            logging.info("Warn_ShopView 등록 완료.")
+
             info_view = InfoChangeView()
             self.add_view(info_view)
             logging.info("InfoChangeView 등록 완료.")
@@ -78,7 +83,7 @@ class CustomBot(commands.Bot):
         intents.guilds = True
         intents.members = True
         intents.voice_states = True
-        
+
         super().__init__(command_prefix="!", intents=intents)
         self.view_manager = None  # setup_hook에서 초기화
         self.guild = None
@@ -97,16 +102,17 @@ class CustomBot(commands.Bot):
             # 내전 활성화 확인 (initialize_ongoing_war 호출)
             initialize_ongoing_war()
             logging.info("내전 활성화 상태 확인 완료")
-            
+
             # 확장 기능 로드
             extensions: List[str] = [
                 "commands.attendance",
                 "commands.information",
                 "commands.war",
                 "commands.attendance_top",
-                "shop.Mileage_shop"
+                "shop.Mileage_shop",
+                "shop.Warn_shop"
             ]
-            
+
             for extension in extensions:
                 try:
                     await self.load_extension(extension)
@@ -117,46 +123,46 @@ class CustomBot(commands.Bot):
 
             # View 초기화
             await self.view_manager.initialize_views()
-            
+
             self.setup_done = True
-            
+
         except Exception as e:
             logging.error(f"봇 설정 중 오류 발생: {e}", exc_info=True)
             self.setup_done = False
 
     async def on_ready(self):
-     if not self._synced:
-        try:
-            logging.info("명령어 동기화 시작...")
-            
-            # GUILD ID가 설정된 경우 해당 길드에만 동기화
-            if GUILD_ID:
-                guild = discord.Object(id=GUILD_ID)
-                commands_synced = await self.tree.sync(guild=guild)
-                logging.info(f"길드 ID {GUILD_ID}에 동기화된 명령어 수: {len(commands_synced)}")
-            else:
-                # GUILD ID가 없으면 글로벌 동기화
-                commands_synced = await self.tree.sync()
-                logging.info(f"글로벌로 동기화된 명령어 수: {len(commands_synced)}")
-            
-            self._synced = True
-        except Exception as e:
-            logging.error(f"명령어 동기화 중 오류 발생: {e}", exc_info=True)
+        if not self._synced:
+            try:
+                logging.info("명령어 동기화 시작...")
 
-        logging.info(f"\n{self.user} 으로 로그인했습니다!")
-        logging.info(f"서버 ID: {GUILD_ID}")
-        
-        guild = self.get_guild(GUILD_ID)
-        if guild:
-            logging.info(f"서버 '{guild.name}'에 연결됨")
-            await self.change_presence(
-                activity=discord.Activity(
-                    type=discord.ActivityType.watching,
-                    name="길드원 관리"
+                # GUILD ID가 설정된 경우 해당 길드에만 동기화
+                if GUILD_ID:
+                    guild = discord.Object(id=GUILD_ID)
+                    commands_synced = await self.tree.sync(guild=guild)
+                    logging.info(f"길드 ID {GUILD_ID}에 동기화된 명령어 수: {len(commands_synced)}")
+                else:
+                    # GUILD ID가 없으면 글로벌 동기화
+                    commands_synced = await self.tree.sync()
+                    logging.info(f"글로벌로 동기화된 명령어 수: {len(commands_synced)}")
+
+                self._synced = True
+            except Exception as e:
+                logging.error(f"명령어 동기화 중 오류 발생: {e}", exc_info=True)
+
+            logging.info(f"\n{self.user} 으로 로그인했습니다!")
+            logging.info(f"서버 ID: {GUILD_ID}")
+
+            guild = self.get_guild(GUILD_ID)
+            if guild:
+                logging.info(f"서버 '{guild.name}'에 연결됨")
+                await self.change_presence(
+                    activity=discord.Activity(
+                        type=discord.ActivityType.watching,
+                        name="길드원 관리"
+                    )
                 )
-            )
-        else:
-            logging.warning(f"경고: ID {GUILD_ID}인 서버를 찾을 수 없음")
+            else:
+                logging.warning(f"경고: ID {GUILD_ID}인 서버를 찾을 수 없음")
 
     async def on_member_join(self, member):
         await ServerLogger.log_member_join(self, member)
@@ -220,10 +226,10 @@ def main():
     try:
         if not TOKEN:
             raise ValueError("Discord 토큰이 설정되지 않았습니다.")
-        
+
         bot = CustomBot()
         bot.run(TOKEN, log_handler=None)
-        
+
     except Exception as e:
         logging.critical(f"봇 실행 중 치명적 오류 발생: {e}", exc_info=True)
         raise
